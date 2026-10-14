@@ -78,6 +78,11 @@ MARCA = {
         "cp teradesk/marca/icon.ico flutter/windows/runner/resources/app_icon.ico\n"
         "cp teradesk/marca/icon.ico flutter/assets/icon.ico\n"
         "cp teradesk/marca/icon.png flutter/assets/icon.png\n"
+        "cp teradesk/marca/logo.png teradesk/marca/logo_light.png teradesk/marca/logo_dark.png flutter/assets/\n"
+        # Sin \"Con tecnologia de RustDesk\": es un enlace a rustdesk.com y un cliente acabaria bajando el oficial.
+        "D=flutter/lib/common.dart\n"
+        "sed -i 's|if (bind.mainGetBuildinOption(key: \"hide-powered-by-me\") == .Y.) {|if (true) {|' $D\n"
+        "grep -q 'if (true) {' $D || { echo 'NO SE OCULTO powered_by'; exit 1; }\n"
         "R=flutter/windows/runner/Runner.rc\n"
         "sed -i -E 's|(VALUE \"ProductName\", )\"RustDesk\"|\\1\"TeraDesk\"|; "
         "s|(VALUE \"FileDescription\", )\"[^\"]*\"|\\1\"TeraDesk - Soporte remoto TeraNeT\"|' $R\n"
