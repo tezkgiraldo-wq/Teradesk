@@ -32,6 +32,8 @@ y = YAML(); y.preserve_quotes = True; y.width = 4096
 wf = y.load(txt)
 wf["name"] = "TeraDesk - compilar Windows x64"
 wf["on"] = {"workflow_dispatch": None}
+# sin esto el GITHUB_TOKEN del fork no puede crear la release (403 en "Publish Release")
+wf.insert(list(wf.keys()).index("on") + 1, "permissions", {"contents": "write"})
 
 QUEDAN = ["validate-update-metadata-keys", "generate-bridge",
           "build-RustDeskTempTopMostWindow", "build-for-windows-flutter"]
