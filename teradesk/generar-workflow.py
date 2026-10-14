@@ -62,9 +62,52 @@ PASO = {
         f"grep -q '\"{SERVER}\"' $F && grep -q '\"{KEY}\"' $F || {{ echo 'NO SE APLICO EL PARCHE'; exit 1; }}\n"
     ),
 }
+MARCA = {
+    "name": "TeraDesk - nombre e iconos propios",
+    "shell": "bash",
+    "run": (
+        "set -e\n"
+        # APP_NAME manda en: carpeta de config, servicio, carpeta de instalacion, TeraDesk.exe
+        # al instalar, tuberias IPC y protocolo teradesk://. Asi convive con un RustDesk oficial.
+        "F=libs/hbb_common/src/config.rs\n"
+        "sed -i 's|RwLock::new(\"RustDesk\".to_owned())|RwLock::new(\"TeraDesk\".to_owned())|' $F\n"
+        "grep -q 'RwLock::new(\"TeraDesk\".to_owned())' $F || { echo 'NO SE CAMBIO APP_NAME'; exit 1; }\n"
+        "cp teradesk/marca/icon.ico res/icon.ico\n"
+        "cp teradesk/marca/tray-icon.ico res/tray-icon.ico\n"
+        "cp teradesk/marca/icon.png res/icon.png\n"
+        "cp teradesk/marca/icon.ico flutter/windows/runner/resources/app_icon.ico\n"
+        "cp teradesk/marca/icon.ico flutter/assets/icon.ico\n"
+        "cp teradesk/marca/icon.png flutter/assets/icon.png\n"
+        "R=flutter/windows/runner/Runner.rc\n"
+        "sed -i -E 's|(VALUE \"ProductName\", )\"RustDesk\"|\\1\"TeraDesk\"|; "
+        "s|(VALUE \"FileDescription\", )\"[^\"]*\"|\\1\"TeraDesk - Soporte remoto TeraNeT\"|' $R\n"
+        "grep -n 'ProductName\\|FileDescription' $R\n"
+    ),
+}
+
 pasos = wf["jobs"]["build-for-windows-flutter"]["steps"]
 i = next(k for k, s in enumerate(pasos) if s.get("name") == "Checkout source code")
 pasos.insert(i + 1, PASO)
+pasos.insert(i + 2, MARCA)
+
+# El MSI de RustDesk exige <app-name>.exe en la carpeta y comparte UpgradeCode con el
+# oficial si no se reconstruye entero: instalarlo podria reemplazar un RustDesk oficial.
+# Por ahora solo se publica el .exe.
+for nombre in ("Build msi", "Build pre-built MSI template", "Upload unsigned msi template"):
+    pasos[:] = [s for s in pasos if s.get("name") != nombre]
+
+# El autoextraible saca los archivos a una carpeta con el nombre del .exe: con
+# TeraDesk.exe no se mezcla con la de un RustDesk portable.
+se = next(s for s in pasos if s.get("name") == "Build self-extracted executable")
+viejo = "python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/rustdesk.exe"
+assert viejo in se["run"], "cambio el paso del autoextraible"
+se["run"] = se["run"].replace(viejo, "mv ../../rustdesk/rustdesk.exe ../../rustdesk/TeraDesk.exe\n"
+                              "python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/TeraDesk.exe")
+se["run"] = se["run"].replace("./SignOutput/rustdesk-${{ env.VERSION }}", "./SignOutput/TeraDesk-${{ env.VERSION }}")
+assert "TeraDesk-${{ env.VERSION }}" in se["run"]
+
+pub = next(s for s in pasos if s.get("name") == "Publish Release")
+pub["with"]["files"] = "./SignOutput/TeraDesk-*.exe\n"
 
 with open(DST, "w") as f:
     f.write("# GENERADO por teradesk/generar-workflow.py - no editar a mano\n")
