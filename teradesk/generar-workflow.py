@@ -30,13 +30,13 @@ assert "inputs." not in txt, "quedo una referencia a inputs.* sin traducir"
 
 y = YAML(); y.preserve_quotes = True; y.width = 4096
 wf = y.load(txt)
-wf["name"] = "TeraDesk - compilar Windows x64"
+wf["name"] = "TeraDesk - compilar Windows x64"  # y macOS (dmg)
 wf["on"] = {"workflow_dispatch": None}
 # sin esto el GITHUB_TOKEN del fork no puede crear la release (403 en "Publish Release")
 wf.insert(list(wf.keys()).index("on") + 1, "permissions", {"contents": "write"})
 
 QUEDAN = ["validate-update-metadata-keys", "generate-bridge",
-          "build-RustDeskTempTopMostWindow", "build-for-windows-flutter"]
+          "build-RustDeskTempTopMostWindow", "build-for-windows-flutter", "build-for-macOS"]
 for j in list(wf["jobs"]):
     if j not in QUEDAN:
         del wf["jobs"][j]
@@ -110,6 +110,54 @@ se["run"] = se["run"].replace(viejo, "mv ../../rustdesk/rustdesk.exe ../../rustd
                               "python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/TeraDesk.exe")
 se["run"] = se["run"].replace("./SignOutput/rustdesk-${{ env.VERSION }}", "./SignOutput/TeraDesk-${{ env.VERSION }}")
 assert "TeraDesk-${{ env.VERSION }}" in se["run"]
+
+# ---------------------------------------------------------------- macOS (.dmg)
+# Mismo server/llave/marca. En Mac APP_NAME tiene que coincidir con /Applications/<APP_NAME>.app
+# y con el ejecutable de dentro, asi que tambien cambia PRODUCT_NAME y todas las rutas RustDesk.app.
+MARCA_MAC = {
+    "name": "TeraDesk - nombre e iconos propios (Mac)",
+    "shell": "bash",
+    "run": (
+        "set -e\n"
+        "F=libs/hbb_common/src/config.rs\n"
+        "sed -i '' 's|RwLock::new(\"RustDesk\".to_owned())|RwLock::new(\"TeraDesk\".to_owned())|' $F\n"
+        "grep -q 'RwLock::new(\"TeraDesk\".to_owned())' $F || { echo 'NO SE CAMBIO APP_NAME'; exit 1; }\n"
+        "cp teradesk/marca/icon.png res/icon.png\n"
+        "cp teradesk/marca/icon.ico flutter/assets/icon.ico\n"
+        "cp teradesk/marca/icon.png flutter/assets/icon.png\n"
+        "cp teradesk/marca/logo.png teradesk/marca/logo_light.png teradesk/marca/logo_dark.png flutter/assets/\n"
+        "D=flutter/lib/common.dart\n"
+        "sed -i '' 's|if (bind.mainGetBuildinOption(key: \"hide-powered-by-me\") == .Y.) {|if (true) {|' $D\n"
+        "grep -q 'if (true) {' $D || { echo 'NO SE OCULTO powered_by'; exit 1; }\n"
+        "X=flutter/macos/Runner/Configs/AppInfo.xcconfig\n"
+        "sed -i '' -e 's|^PRODUCT_NAME = .*|PRODUCT_NAME = TeraDesk|' "
+        "-e 's|^PRODUCT_BUNDLE_IDENTIFIER = .*|PRODUCT_BUNDLE_IDENTIFIER = com.teranet.teradesk|' $X\n"
+        "P=flutter/macos/Runner/Info.plist\n"
+        "sed -i '' -e 's|<string>com.carriez.rustdesk</string>|<string>com.teranet.teradesk</string>|' "
+        "-e 's|<string>rustdesk</string>|<string>teradesk</string>|' $P\n"
+        "sed -i '' 's|RustDesk.app|TeraDesk.app|g' build.py flutter/macos/Runner.xcodeproj/project.pbxproj\n"
+        "cp teradesk/marca/AppIcon.icns flutter/macos/Runner/AppIcon.icns\n"
+        "cp teradesk/marca/mac-icon.png res/mac-icon.png\n"
+        "grep -n 'PRODUCT_NAME\\|BUNDLE_IDENTIFIER' $X\n"
+        "grep -c 'TeraDesk.app' build.py\n"
+    ),
+}
+mac = wf["jobs"]["build-for-macOS"]["steps"]
+j = next(k for k, s in enumerate(mac) if s.get("name") == "Checkout source code")
+mac.insert(j + 1, dict(PASO, name="TeraDesk - server y llave propios (Mac)",
+                       run=PASO["run"].replace("sed -i -E ", "sed -i '' -E ")))
+mac.insert(j + 2, MARCA_MAC)
+for s in mac:
+    for campo in ("run",):
+        if campo in s and not s.get("name", "").startswith("TeraDesk"):
+            s[campo] = (s[campo].replace("RustDesk.app", "TeraDesk.app")
+                        .replace("Contents/MacOS/RustDesk", "Contents/MacOS/TeraDesk")
+                        .replace("rustdesk-${{ env.VERSION }}", "TeraDesk-${{ env.VERSION }}")
+                        .replace('"rustdesk-${VERSION}', '"TeraDesk-${VERSION}'))
+    if s.get("name") == "Publish DMG package":
+        s["with"]["files"] = "TeraDesk*-${{ matrix.job.arch }}.dmg\n"
+    if s.get("name") == "Upload unsigned macOS app":
+        s["with"]["path"] = "TeraDesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg"
 
 pub = next(s for s in pasos if s.get("name") == "Publish Release")
 pub["with"]["files"] = "./SignOutput/TeraDesk-*.exe\n"
