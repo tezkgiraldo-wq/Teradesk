@@ -159,6 +159,45 @@ for s in mac:
     if s.get("name") == "Upload unsigned macOS app":
         s["with"]["path"] = "TeraDesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg"
 
+# Firma con el certificado AUTOFIRMADO de TeraNeT (no es de Apple: no quita el aviso de la primera vez).
+# Sin firma, en Mac M (arm64) la app sale "danada" y no abre; firmada en el Mac con "-" abre, pero cada
+# version nueva cambia de identidad y Mac pierde los permisos (pantalla negra). Con un certificado FIJO
+# la identidad es siempre la misma y los permisos de Grabacion/Accesibilidad sobreviven al actualizar.
+# Secrets con nombre propio a proposito: MACOS_P12_BASE64 activaria la firma+notarizacion de upstream.
+# El certificado vive en el server: /etc/lab/teradesk-firma-mac/ (si se pierde, los permisos de todos
+# los Mac clientes se caen en la siguiente actualizacion).
+FIRMA_MAC = {
+    "name": "TeraDesk - firmar con certificado propio (Mac)",
+    "if": "env.UPLOAD_ARTIFACT == 'true'",
+    "shell": "bash",
+    "env": {"P12": "${{ secrets.TERADESK_MAC_P12 }}", "P12_PASS": "${{ secrets.TERADESK_MAC_P12_PASS }}"},
+    "run": (
+        "set -euo pipefail\n"
+        "[ -n \"$P12\" ] || { echo '::error::falta el secret TERADESK_MAC_P12'; exit 1; }\n"
+        "KC=\"$RUNNER_TEMP/teradesk.keychain-db\"; KCPASS=$(openssl rand -hex 16)\n"
+        "echo \"$P12\" | base64 --decode > \"$RUNNER_TEMP/firma.p12\"\n"
+        "security create-keychain -p \"$KCPASS\" \"$KC\"\n"
+        "security set-keychain-settings -lut 21600 \"$KC\"\n"
+        "security unlock-keychain -p \"$KCPASS\" \"$KC\"\n"
+        "security import \"$RUNNER_TEMP/firma.p12\" -k \"$KC\" -P \"$P12_PASS\" -T /usr/bin/codesign\n"
+        "rm -f \"$RUNNER_TEMP/firma.p12\"\n"
+        "security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k \"$KCPASS\" \"$KC\" >/dev/null\n"
+        "security list-keychains -d user -s \"$KC\" $(security list-keychains -d user | tr -d '\"')\n"
+        "security find-identity -p codesigning \"$KC\"\n"
+        "# por huella SHA-1: el certificado es autofirmado y no sale como 'valido' en find-identity -v\n"
+        "ID=$(security find-certificate -c 'TeraNeT Computadores' -Z \"$KC\" | awk '/SHA-1 hash/{print $3}')\n"
+        "[ -n \"$ID\" ] || { echo '::error::no se encontro el certificado en el keychain'; exit 1; }\n"
+        "APP=./flutter/build/macos/Build/Products/Release/TeraDesk.app\n"
+        "bash ./.github/scripts/sign-macos-app.sh \"$APP\" \"$ID\" ./flutter/macos/Runner/Release.entitlements\n"
+        "codesign -dvv \"$APP\" 2>&1 | grep -E 'Identifier|Authority|TeamIdentifier'\n"
+        "echo 'Requisito designado (lo que Mac usa para amarrar los permisos):'\n"
+        "codesign -d -r- \"$APP\"\n"
+        "codesign -d -r- \"$APP\" 2>&1 | grep -q 'certificate' || { echo '::error::la firma no quedo amarrada al certificado'; exit 1; }\n"
+    ),
+}
+k = next(i for i, s in enumerate(mac) if s.get("name") == "create unsigned dmg")
+mac.insert(k, FIRMA_MAC)
+
 pub = next(s for s in pasos if s.get("name") == "Publish Release")
 pub["with"]["files"] = "./SignOutput/TeraDesk-*.exe\n"
 
